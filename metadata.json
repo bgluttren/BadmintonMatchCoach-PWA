@@ -1,0 +1,8 @@
+{
+  "name": "BadmintonMatchCoachPWA",
+  "description": "Eyes-free real-time badminton match tracking and tactical shot analysis PWA for Singles and Doubles with official BWF scoring and rotation rules.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

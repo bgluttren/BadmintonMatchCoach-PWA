@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#072D24"/>
+  <rect x="44" y="96" width="424" height="320" rx="16" fill="#0E5A48" stroke="#F8FAFC" stroke-width="10"/>
+  <line x1="256" y1="96" x2="256" y2="416" stroke="#F8FAFC" stroke-width="10" stroke-dasharray="14 10"/>
+  <line x1="168" y1="96" x2="168" y2="416" stroke="#F8FAFC" stroke-width="6" opacity="0.8"/>
+  <line x1="344" y1="96" x2="344" y2="416" stroke="#F8FAFC" stroke-width="6" opacity="0.8"/>
+  <line x1="44" y1="256" x2="168" y2="256" stroke="#F8FAFC" stroke-width="6" opacity="0.8"/>
+  <line x1="344" y1="256" x2="468" y2="256" stroke="#F8FAFC" stroke-width="6" opacity="0.8"/>
+  <g transform="translate(256 256) rotate(-35)">
+    <path d="M-24 -76 L24 -76 L14 20 L-14 20 Z" fill="#F8FAFC"/>
+    <line x1="-16" y1="-76" x2="-9" y2="20" stroke="#072D24" stroke-width="3"/>
+    <line x1="0" y1="-76" x2="0" y2="20" stroke="#072D24" stroke-width="3"/>
+    <line x1="16" y1="-76" x2="9" y2="20" stroke="#072D24" stroke-width="3"/>
+    <path d="M-16 20 C-16 42, 16 42, 16 20 Z" fill="#F59E0B"/>
+  </g>
+</svg>

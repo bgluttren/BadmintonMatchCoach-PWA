@@ -1,0 +1,16 @@
+{
+  "languages": [
+    {
+      "code": "en",
+      "name": "English",
+      "nativeName": "English",
+      "url": "/locales/en.json"
+    },
+    {
+      "code": "sv",
+      "name": "Swedish",
+      "nativeName": "Svenska",
+      "url": "/locales/sv.json"
+    }
+  ]
+}
