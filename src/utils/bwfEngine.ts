@@ -481,6 +481,10 @@ export interface TapShotResult {
   autoCorrected: boolean;
 }
 
+export interface BuildTapOptions {
+  disableGhostFill?: boolean;
+}
+
 /**
  * Core Eyes-Free Shot Registration (Steps 1–4):
  * - Shot #1: Serve on serving half (auto-corrected if tapped on wrong side).
@@ -493,10 +497,12 @@ export function buildTapShots(
   currentShots: ShotRecord[],
   rawX: number,
   rawY: number,
-  now: number
+  now: number,
+  options?: BuildTapOptions
 ): TapShotResult {
   const serviceInfo = getActiveServiceInfo(state);
   const actionGroupId = `grp_${now}_${Math.random().toString(36).slice(2, 7)}`;
+  const uidSuffix = Math.random().toString(36).slice(2, 6);
 
   // Step 1: Serve (first shot)
   if (currentShots.length === 0) {
@@ -507,7 +513,7 @@ export function buildTapShots(
       state.config.matchClass
     );
     const serveShot: ShotRecord = {
-      id: `shot_${now}_1`,
+      id: `shot_${now}_1_${uidSuffix}`,
       shotNumber: 1,
       playerId: serviceInfo.serverId,
       side: serviceInfo.servingSide,
@@ -529,8 +535,8 @@ export function buildTapShots(
   const prevShot = currentShots[currentShots.length - 1];
   const dt = now - prevShot.timestamp;
 
-  // Step 3: Ghost Shots on interruption (> 3 seconds)
-  if (dt > 3000) {
+  // Step 3: Ghost Shots on interruption (> 3 seconds), skipped during undo position corrections
+  if (!options?.disableGhostFill && dt > 3000) {
     const resumedHalf: CourtHalf = rawX < NET_X ? 'left' : 'right';
     let ghostCount = Math.max(1, Math.round(dt / 1200) - 1);
 
@@ -632,7 +638,7 @@ export function buildTapShots(
   );
 
   const nextShot: ShotRecord = {
-    id: `shot_${now}_${nextShotNum}`,
+    id: `shot_${now}_${nextShotNum}_${uidSuffix}`,
     shotNumber: nextShotNum,
     playerId: inferred.playerId,
     side: inferred.side,

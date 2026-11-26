@@ -34,6 +34,7 @@ const SHOT_TYPES: ShotType[] = [
   'Drop',
   'Net Stop',
   'Drive',
+  'Block',
   'Lift',
   'Serve',
 ];
@@ -341,12 +342,12 @@ export const ResultMenuModal: React.FC<ResultMenuModalProps> = ({
               </div>
             </div>
 
-            {/* 7 Shot Types */}
+            {/* 8 Shot Types */}
             <div>
               <div className="mb-1.5 text-xs font-medium text-emerald-100/75">
                 {t('resultModal.finishingShotType')}
               </div>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {SHOT_TYPES.map((type) => (
                   <button
                     key={type}

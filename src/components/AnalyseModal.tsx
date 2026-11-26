@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowUpDown, Download, PauseCircle, X } from 'lucide-react';
+import { ArrowUpDown, Download, Eye, PauseCircle, X } from 'lucide-react';
 import { useI18n } from '../i18n';
 import {
   MatchState,
@@ -28,6 +28,8 @@ import {
   VIEWBOX_Y,
 } from '../utils/bwfEngine';
 import { exportMatchAsJSON } from '../utils/storage';
+import { RallyPreviewModal } from './RallyPreviewModal';
+import { ScoreHeatGraph } from './ScoreHeatGraph';
 
 interface AnalyseModalProps {
   isOpen: boolean;
@@ -41,6 +43,7 @@ const SHOT_TYPES: ShotType[] = [
   'Drop',
   'Net Stop',
   'Drive',
+  'Block',
   'Lift',
   'Serve',
 ];
@@ -61,6 +64,7 @@ export const AnalyseModal: React.FC<AnalyseModalProps> = ({
   >('ALL');
   const [listGameFilter, setListGameFilter] = useState<'ALL' | number>('ALL');
   const [newestFirst, setNewestFirst] = useState(false);
+  const [previewRally, setPreviewRally] = useState<RallyRecord | null>(null);
 
   const stats = useMemo(() => {
     const getRallyFinisher = (
@@ -156,6 +160,7 @@ export const AnalyseModal: React.FC<AnalyseModalProps> = ({
       Drop: createEmptyBreakdown(),
       'Net Stop': createEmptyBreakdown(),
       Drive: createEmptyBreakdown(),
+      Block: createEmptyBreakdown(),
       Lift: createEmptyBreakdown(),
       Serve: createEmptyBreakdown(),
     };
@@ -347,6 +352,12 @@ export const AnalyseModal: React.FC<AnalyseModalProps> = ({
   const visiblePauseCount = timelineItems.filter(
     (e) => e.kind === 'pause'
   ).length;
+  const orderedPreviewRallies = timelineItems
+    .filter(
+      (entry): entry is Extract<TimelineEntry, { kind: 'rally' }> =>
+        entry.kind === 'rally'
+    )
+    .map((entry) => entry.rally);
 
   const getPauseReasonsList = (pause: PauseEvent): PauseReason[] => {
     if (pause.reasons && pause.reasons.length > 0) return pause.reasons;
@@ -1263,23 +1274,38 @@ export const AnalyseModal: React.FC<AnalyseModalProps> = ({
             </div>
           </div>
 
+          {/* Score Momentum & Heat Graph */}
+          <ScoreHeatGraph
+            matchState={matchState}
+            sideALabel={sideALabel}
+            sideBLabel={sideBLabel}
+            onPreviewRally={(rally) => setPreviewRally(rally)}
+          />
+
           {/* Complete Rally & Pause Timeline */}
           <div className="rounded-2xl border border-emerald-900/70 bg-[#0B241E] p-4 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-bold text-white">
-                  {t('analyseModal.rallyList.title')}
-                </h3>
-                <span className="rounded-lg border border-emerald-800/70 bg-[#061814] px-2 py-0.5 text-[11px] font-semibold text-emerald-300 tabular-nums">
-                  {visiblePauseCount > 0
-                    ? t('analyseModal.rallyList.countWithPausesBadge', {
-                        rallies: visibleRallyCount,
-                        pauses: visiblePauseCount,
-                      })
-                    : t('analyseModal.rallyList.countBadge', {
-                        count: visibleRallyCount,
-                      })}
-                </span>
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-white">
+                    {t('analyseModal.rallyList.title')}
+                  </h3>
+                  <span className="rounded-lg border border-emerald-800/70 bg-[#061814] px-2 py-0.5 text-[11px] font-semibold text-emerald-300 tabular-nums">
+                    {visiblePauseCount > 0
+                      ? t('analyseModal.rallyList.countWithPausesBadge', {
+                          rallies: visibleRallyCount,
+                          pauses: visiblePauseCount,
+                        })
+                      : t('analyseModal.rallyList.countBadge', {
+                          count: visibleRallyCount,
+                        })}
+                  </span>
+                </div>
+                {visibleRallyCount > 0 && (
+                  <p className="text-[11px] text-emerald-100/55">
+                    {t('analyseModal.rallyPreview.tapRowHint')}
+                  </p>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
@@ -1357,6 +1383,11 @@ export const AnalyseModal: React.FC<AnalyseModalProps> = ({
                         <th className="px-3 py-2.5 font-semibold">
                           {t('analyseModal.rallyList.cols.decidingShot')}
                         </th>
+                        <th className="px-3 py-2.5 font-semibold text-right">
+                          <span className="sr-only">
+                            {t('analyseModal.rallyPreview.buttonLabel')}
+                          </span>
+                        </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-emerald-950/80">
@@ -1420,6 +1451,7 @@ export const AnalyseModal: React.FC<AnalyseModalProps> = ({
                               <td className="px-3 py-2.5 text-emerald-100/80">
                                 {secondaryNote || pause.detail}
                               </td>
+                              <td className="px-3 py-2.5" />
                             </tr>
                           );
                         }
@@ -1441,7 +1473,8 @@ export const AnalyseModal: React.FC<AnalyseModalProps> = ({
                         return (
                           <tr
                             key={rally.id}
-                            className="hover:bg-emerald-950/35 transition-colors"
+                            onClick={() => setPreviewRally(rally)}
+                            className="cursor-pointer hover:bg-emerald-950/55 transition-colors"
                           >
                             <td className="px-3 py-2.5 font-mono font-semibold text-emerald-100/80 tabular-nums whitespace-nowrap">
                               #{rally.rallyNumber}
@@ -1505,6 +1538,19 @@ export const AnalyseModal: React.FC<AnalyseModalProps> = ({
                                   </span>
                                 )}
                               </div>
+                            </td>
+                            <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setPreviewRally(rally);
+                                }}
+                                className="inline-flex items-center gap-1 rounded-lg border border-emerald-700/70 bg-[#0B241E] px-2 py-1 text-[11px] font-semibold text-emerald-200 hover:border-emerald-400 hover:text-white"
+                              >
+                                <Eye className="h-3 w-3 text-emerald-400" />
+                                {t('analyseModal.rallyPreview.buttonLabel')}
+                              </button>
                             </td>
                           </tr>
                         );
@@ -1593,7 +1639,16 @@ export const AnalyseModal: React.FC<AnalyseModalProps> = ({
                     return (
                       <div
                         key={rally.id}
-                        className="rounded-xl border border-emerald-900/70 bg-[#061814] p-3 space-y-2"
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => setPreviewRally(rally)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setPreviewRally(rally);
+                          }
+                        }}
+                        className="cursor-pointer rounded-xl border border-emerald-900/70 bg-[#061814] p-3 space-y-2 transition-colors hover:border-emerald-500/60"
                       >
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex items-center gap-2">
@@ -1636,30 +1691,37 @@ export const AnalyseModal: React.FC<AnalyseModalProps> = ({
                           </span>
                         </div>
 
-                        <div className="flex flex-wrap items-center gap-1.5 border-t border-emerald-950/80 pt-1.5 text-xs">
-                          <span className="text-emerald-100/60">
-                            {t('analyseModal.rallyList.cols.decidingShot')}:
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-emerald-950/80 pt-1.5 text-xs">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-emerald-100/60">
+                              {t('analyseModal.rallyList.cols.decidingShot')}:
+                            </span>
+                            <span className="font-semibold text-slate-100">
+                              {shotName}
+                            </span>
+                            {rally.isBackhand && (
+                              <span className="rounded border border-emerald-800/80 bg-emerald-950/80 px-1.5 py-0.5 text-[10px] text-emerald-200">
+                                {t('resultModal.backhand')}
+                              </span>
+                            )}
+                            {rally.isDeception && (
+                              <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-200">
+                                {t('resultModal.deception')}
+                              </span>
+                            )}
+                            {finisherName && (
+                              <span className="text-[11px] text-emerald-100/60">
+                                ({t('analyseModal.rallyList.byPlayer', {
+                                  name: finisherName,
+                                })})
+                              </span>
+                            )}
+                          </div>
+
+                          <span className="inline-flex items-center gap-1 rounded-md border border-emerald-700/70 bg-[#0B241E] px-2 py-0.5 text-[10px] font-semibold text-emerald-200">
+                            <Eye className="h-3 w-3 text-emerald-400" />
+                            {t('analyseModal.rallyPreview.buttonLabel')}
                           </span>
-                          <span className="font-semibold text-slate-100">
-                            {shotName}
-                          </span>
-                          {rally.isBackhand && (
-                            <span className="rounded border border-emerald-800/80 bg-emerald-950/80 px-1.5 py-0.5 text-[10px] text-emerald-200">
-                              {t('resultModal.backhand')}
-                            </span>
-                          )}
-                          {rally.isDeception && (
-                            <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-200">
-                              {t('resultModal.deception')}
-                            </span>
-                          )}
-                          {finisherName && (
-                            <span className="text-[11px] text-emerald-100/60">
-                              ({t('analyseModal.rallyList.byPlayer', {
-                                name: finisherName,
-                              })})
-                            </span>
-                          )}
                         </div>
                       </div>
                     );
@@ -1670,6 +1732,16 @@ export const AnalyseModal: React.FC<AnalyseModalProps> = ({
           </div>
         </div>
       </div>
+
+      <RallyPreviewModal
+        rally={previewRally}
+        matchState={matchState}
+        orderedRallies={orderedPreviewRallies}
+        sideALabel={sideALabel}
+        sideBLabel={sideBLabel}
+        onSelectRally={setPreviewRally}
+        onClose={() => setPreviewRally(null)}
+      />
     </div>
   );
 };

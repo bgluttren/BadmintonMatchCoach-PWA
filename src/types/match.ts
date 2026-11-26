@@ -33,6 +33,7 @@ export type ShotType =
   | 'Drop'
   | 'Net Stop'
   | 'Drive'
+  | 'Block'
   | 'Lift'
   | 'Serve';
 

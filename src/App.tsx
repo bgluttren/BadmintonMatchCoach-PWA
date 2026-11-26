@@ -39,6 +39,7 @@ import {
   ActiveSessionState,
   archiveMatch,
   clearActiveMatch,
+  CorrectionTimingState,
   hydrateFromIndexedDB,
   loadActiveSession,
   loadArchivedMatches,
@@ -56,6 +57,7 @@ function getInitialSession(): ActiveSessionState {
       matchState: null,
       currentShots: [],
       redoStack: [],
+      correctionTiming: null,
       activeModal: 'none',
       resultDraft: null,
       pauseDraft: null,
@@ -122,7 +124,8 @@ export default function App() {
           cur.matchState.config.id,
           cur.currentShots,
           cur.redoStack,
-          cur.updatedAt
+          cur.updatedAt,
+          cur.correctionTiming ?? null
         );
       }
     }, 700);
@@ -197,6 +200,7 @@ export default function App() {
         matchState: initial,
         currentShots: [],
         redoStack: [],
+        correctionTiming: null,
         activeModal: 'none',
         resultDraft: null,
         pauseDraft: null,
@@ -228,18 +232,70 @@ export default function App() {
       if (!cur.matchState) {
         return { ghostCount: 0, autoCorrected: false };
       }
+
+      let tapTimestamp = now;
+      let disableGhostFill = false;
+      let nextCorrectionTiming: CorrectionTimingState | null =
+        cur.correctionTiming ?? null;
+
+      if (nextCorrectionTiming) {
+        disableGhostFill = true;
+        if (nextCorrectionTiming.remainingTimestamps.length > 0) {
+          tapTimestamp = nextCorrectionTiming.remainingTimestamps[0];
+          nextCorrectionTiming = {
+            remainingTimestamps: nextCorrectionTiming.remainingTimestamps.slice(1),
+            lastRealTapAt: now,
+          };
+        } else {
+          const prevShot = cur.currentShots[cur.currentShots.length - 1];
+          const delta =
+            nextCorrectionTiming.lastRealTapAt !== null
+              ? Math.max(1, now - nextCorrectionTiming.lastRealTapAt)
+              : 0;
+          tapTimestamp = prevShot ? prevShot.timestamp + delta : now;
+          nextCorrectionTiming = {
+            remainingTimestamps: [],
+            lastRealTapAt: now,
+          };
+        }
+      } else if (cur.redoStack.length > 0) {
+        const undoneTimestamps: number[] = [];
+        for (let i = cur.redoStack.length - 1; i >= 0; i--) {
+          const grp = cur.redoStack[i];
+          for (let j = 0; j < grp.length; j++) {
+            undoneTimestamps.push(grp[j].timestamp);
+          }
+        }
+        // If only a single serve was undone back to an empty court, start a fresh rally
+        if (cur.currentShots.length > 0 || undoneTimestamps.length >= 2) {
+          disableGhostFill = true;
+          tapTimestamp = undoneTimestamps[0] ?? now;
+          nextCorrectionTiming = {
+            remainingTimestamps: undoneTimestamps.slice(1),
+            lastRealTapAt: now,
+          };
+        }
+      }
+
+      const prevShot = cur.currentShots[cur.currentShots.length - 1];
+      if (prevShot && tapTimestamp <= prevShot.timestamp) {
+        tapTimestamp = prevShot.timestamp + 1;
+      }
+
       const result = buildTapShots(
         cur.matchState,
         cur.currentShots,
         courtX,
         courtY,
-        now
+        tapTimestamp,
+        { disableGhostFill }
       );
       commitSession(
         (prev) => ({
           ...prev,
           currentShots: [...prev.currentShots, ...result.addedShots],
           redoStack: [],
+          correctionTiming: nextCorrectionTiming,
         }),
         'deferred_rally'
       );
@@ -285,10 +341,20 @@ export default function App() {
         const remaining = prev.currentShots.filter(
           (s) => s.actionGroupId !== lastGroupId
         );
+        const nextCorrectionTiming = prev.correctionTiming
+          ? {
+              ...prev.correctionTiming,
+              remainingTimestamps: [
+                ...removedGroup.map((s) => s.timestamp),
+                ...prev.correctionTiming.remainingTimestamps,
+              ],
+            }
+          : null;
         return {
           ...prev,
           currentShots: remaining,
           redoStack: [...prev.redoStack, removedGroup],
+          correctionTiming: nextCorrectionTiming,
         };
       }, 'deferred_rally');
       return;
@@ -306,6 +372,7 @@ export default function App() {
           matchState: undoLastCompletedRally(prev.matchState),
           currentShots: lastRally.shots.map((s) => ({ ...s })),
           redoStack: [],
+          correctionTiming: null,
         };
       }, 'immediate');
     }
@@ -315,10 +382,19 @@ export default function App() {
     commitSession((prev) => {
       if (prev.redoStack.length === 0) return prev;
       const groupToRestore = prev.redoStack[prev.redoStack.length - 1];
+      const nextCorrectionTiming = prev.correctionTiming
+        ? {
+            ...prev.correctionTiming,
+            remainingTimestamps: prev.correctionTiming.remainingTimestamps.slice(
+              groupToRestore.length
+            ),
+          }
+        : null;
       return {
         ...prev,
         currentShots: [...prev.currentShots, ...groupToRestore],
         redoStack: prev.redoStack.slice(0, -1),
+        correctionTiming: nextCorrectionTiming,
       };
     }, 'deferred_rally');
   }, [commitSession]);
@@ -437,6 +513,7 @@ export default function App() {
           matchState: cleanedMatch,
           currentShots: [],
           redoStack: [],
+          correctionTiming: null,
           activeModal: interval ? 'pause' : 'none',
           resultDraft: null,
           pauseDraft: interval
@@ -589,6 +666,7 @@ export default function App() {
         matchState: isFinished ? null : prev.matchState,
         currentShots: isFinished ? [] : prev.currentShots,
         redoStack: isFinished ? [] : prev.redoStack,
+        correctionTiming: isFinished ? null : prev.correctionTiming ?? null,
         activeModal: 'none',
         resultDraft: null,
         pauseDraft: null,

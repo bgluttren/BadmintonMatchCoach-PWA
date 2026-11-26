@@ -3,10 +3,12 @@ import {
   ArrowLeftRight,
   BarChart3,
   Check,
+  ChevronDown,
   Download,
   Globe,
   Play,
   RotateCcw,
+  Settings,
   Trophy,
 } from 'lucide-react';
 import { useI18n } from '../i18n';
@@ -35,8 +37,10 @@ import { PWAInstallButton } from './PWAInstallButton';
 import {
   clearSetupDraft,
   exportMatchAsJSON,
+  loadLastMatchRules,
   loadSetupDraft,
   PlayerDraft,
+  saveLastMatchRules,
   saveSetupDraft,
 } from '../utils/storage';
 
@@ -64,9 +68,12 @@ export const MatchSetup: React.FC<MatchSetupProps> = ({
   const { lang, t } = useI18n();
   const [isLangOpen, setIsLangOpen] = useState(false);
   const [initialDraft] = useState(() => loadSetupDraft());
+  const [lastSavedRules] = useState(() => loadLastMatchRules());
+  const [isMoreInfoOpen, setIsMoreInfoOpen] = useState(false);
+  const [isRulesOpen, setIsRulesOpen] = useState(false);
 
   const [matchName, setMatchName] = useState(
-    () => initialDraft?.matchName ?? t('setup.defaultRoundName')
+    () => initialDraft?.matchName ?? ''
   );
   const [tournamentName, setTournamentName] = useState(
     () => initialDraft?.tournamentName ?? ''
@@ -104,24 +111,33 @@ export const MatchSetup: React.FC<MatchSetupProps> = ({
     () => initialDraft?.pB2 ?? emptyDraft(t('setup.playerB2'))
   );
 
-  // Rules
+  // Rules (remember last used settings across matches)
   const [gamesToWin, setGamesToWin] = useState<number>(
-    () => initialDraft?.gamesToWin ?? 2
+    () => initialDraft?.gamesToWin ?? lastSavedRules?.gamesToWin ?? 2
   ); // Best of 3
   const [pointsPerGame, setPointsPerGame] = useState<number>(
-    () => initialDraft?.pointsPerGame ?? 21
+    () => initialDraft?.pointsPerGame ?? lastSavedRules?.pointsPerGame ?? 21
   );
   const [maxPoints, setMaxPoints] = useState<number>(
-    () => initialDraft?.maxPoints ?? 30
+    () => initialDraft?.maxPoints ?? lastSavedRules?.maxPoints ?? 30
   );
   const [bwfIntervalsEnabled, setBwfIntervalsEnabled] = useState<boolean>(
-    () => initialDraft?.bwfIntervalsEnabled ?? true
+    () =>
+      initialDraft?.bwfIntervalsEnabled ??
+      lastSavedRules?.bwfIntervalsEnabled ??
+      true
   );
   const [midGameIntervalSec, setMidGameIntervalSec] = useState<number>(
-    () => initialDraft?.midGameIntervalSec ?? 60
+    () =>
+      initialDraft?.midGameIntervalSec ??
+      lastSavedRules?.midGameIntervalSec ??
+      60
   );
   const [betweenGameIntervalSec, setBetweenGameIntervalSec] = useState<number>(
-    () => initialDraft?.betweenGameIntervalSec ?? 120
+    () =>
+      initialDraft?.betweenGameIntervalSec ??
+      lastSavedRules?.betweenGameIntervalSec ??
+      120
   );
 
   // Coin toss & starting lineup
@@ -253,6 +269,24 @@ export const MatchSetup: React.FC<MatchSetupProps> = ({
     teamBRightServer,
   ]);
 
+  useEffect(() => {
+    saveLastMatchRules({
+      gamesToWin,
+      pointsPerGame,
+      maxPoints,
+      bwfIntervalsEnabled,
+      midGameIntervalSec,
+      betweenGameIntervalSec,
+    });
+  }, [
+    gamesToWin,
+    pointsPerGame,
+    maxPoints,
+    bwfIntervalsEnabled,
+    midGameIntervalSec,
+    betweenGameIntervalSec,
+  ]);
+
   const handleDisciplineChange = (nextDiscipline: MatchDiscipline) => {
     setDiscipline(nextDiscipline);
     const nextClass = getMatchClassForDiscipline(nextDiscipline);
@@ -362,9 +396,24 @@ export const MatchSetup: React.FC<MatchSetupProps> = ({
       });
     }
 
+    const fallbackMatchName =
+      matchClass === 'singles'
+        ? `${previewNames.a1} vs ${previewNames.b1}`
+        : `${previewNames.a1} / ${previewNames.a2} vs ${previewNames.b1} / ${previewNames.b2}`;
+
+    const resolvedRules = {
+      gamesToWin,
+      pointsPerGame: Math.max(1, pointsPerGame),
+      maxPoints: Math.max(pointsPerGame, maxPoints),
+      bwfIntervalsEnabled,
+      midGameIntervalSec: Math.max(10, midGameIntervalSec),
+      betweenGameIntervalSec: Math.max(10, betweenGameIntervalSec),
+    };
+
     const config: MatchConfig = {
       id: `match_${Date.now()}`,
-      matchName: matchName.trim() || t('setup.defaultMatchName'),
+      matchName:
+        matchName.trim() || fallbackMatchName || t('setup.defaultMatchName'),
       tournamentName: tournamentName.trim() || undefined,
       courtName: courtName.trim() || undefined,
       umpireName: umpireName.trim() || undefined,
@@ -374,14 +423,7 @@ export const MatchSetup: React.FC<MatchSetupProps> = ({
       categoryCode,
       createdAt: Date.now(),
       players,
-      rules: {
-        gamesToWin,
-        pointsPerGame: Math.max(1, pointsPerGame),
-        maxPoints: Math.max(pointsPerGame, maxPoints),
-        bwfIntervalsEnabled,
-        midGameIntervalSec: Math.max(10, midGameIntervalSec),
-        betweenGameIntervalSec: Math.max(10, betweenGameIntervalSec),
-      },
+      rules: resolvedRules,
       lineup: {
         firstServerSide,
         sideAHalf,
@@ -402,6 +444,7 @@ export const MatchSetup: React.FC<MatchSetupProps> = ({
       },
     };
 
+    saveLastMatchRules(resolvedRules);
     clearSetupDraft();
     onStartMatch(config);
   };
@@ -568,57 +611,95 @@ export const MatchSetup: React.FC<MatchSetupProps> = ({
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-emerald-100/80">
-                      {t('setup.tournamentNameLabel')}
-                    </label>
-                    <input
-                      type="text"
-                      value={tournamentName}
-                      onChange={(e) => setTournamentName(e.target.value)}
-                      placeholder={t('setup.tournamentNamePlaceholder')}
-                      className="min-h-[44px] w-full rounded-xl border border-emerald-800/70 bg-[#061814] px-3.5 py-2 text-sm font-medium text-white placeholder-slate-500 focus:border-emerald-400 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-emerald-100/80">
-                      {t('setup.matchNameLabel')}
-                    </label>
-                    <input
-                      type="text"
-                      value={matchName}
-                      onChange={(e) => setMatchName(e.target.value)}
-                      placeholder={t('setup.matchNamePlaceholder')}
-                      required
-                      className="min-h-[44px] w-full rounded-xl border border-emerald-800/70 bg-[#061814] px-3.5 py-2 text-sm font-medium text-white placeholder-slate-500 focus:border-emerald-400 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-emerald-100/80">
-                      {t('setup.courtNameLabel')}
-                    </label>
-                    <input
-                      type="text"
-                      value={courtName}
-                      onChange={(e) => setCourtName(e.target.value)}
-                      placeholder={t('setup.courtNamePlaceholder')}
-                      className="min-h-[44px] w-full rounded-xl border border-emerald-800/70 bg-[#061814] px-3.5 py-2 text-sm font-medium text-white placeholder-slate-500 focus:border-emerald-400 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-emerald-100/80">
-                      {t('setup.umpireNameLabel')}
-                    </label>
-                    <input
-                      type="text"
-                      value={umpireName}
-                      onChange={(e) => setUmpireName(e.target.value)}
-                      placeholder={t('setup.umpireNamePlaceholder')}
-                      className="min-h-[44px] w-full rounded-xl border border-emerald-800/70 bg-[#061814] px-3.5 py-2 text-sm font-medium text-white placeholder-slate-500 focus:border-emerald-400 focus:outline-none"
-                    />
-                  </div>
-                </div>
+                {/* Collapsible More Match Information (Tournament, Match Name, Court, Umpire) */}
+                {(() => {
+                  const filledMeta = [
+                    tournamentName.trim(),
+                    matchName.trim(),
+                    courtName.trim(),
+                    umpireName.trim(),
+                  ]
+                    .filter(Boolean)
+                    .join(' · ');
+
+                  return (
+                    <div className="rounded-xl border border-emerald-900/70 bg-[#061814]/80">
+                      <button
+                        type="button"
+                        aria-expanded={isMoreInfoOpen}
+                        onClick={() => setIsMoreInfoOpen((v) => !v)}
+                        className="flex min-h-[44px] w-full items-center justify-between gap-3 px-3.5 py-2.5 text-left transition-colors hover:bg-emerald-950/50 rounded-xl"
+                      >
+                        <div className="min-w-0">
+                          <div className="text-xs font-bold text-emerald-200">
+                            {t('setup.moreMatchInfoToggle')}
+                          </div>
+                          <div className="mt-0.5 truncate text-[11px] text-emerald-100/60">
+                            {filledMeta || t('setup.moreMatchInfoHint')}
+                          </div>
+                        </div>
+                        <ChevronDown
+                          className={`h-4 w-4 shrink-0 text-emerald-300 transition-transform duration-200 ${
+                            isMoreInfoOpen ? 'rotate-180' : ''
+                          }`}
+                        />
+                      </button>
+
+                      {isMoreInfoOpen && (
+                        <div className="grid grid-cols-1 gap-3 border-t border-emerald-900/60 p-3.5 sm:grid-cols-2">
+                          <div>
+                            <label className="mb-1.5 block text-xs font-medium text-emerald-100/80">
+                              {t('setup.tournamentNameLabel')}
+                            </label>
+                            <input
+                              type="text"
+                              value={tournamentName}
+                              onChange={(e) => setTournamentName(e.target.value)}
+                              placeholder={t('setup.tournamentNamePlaceholder')}
+                              className="min-h-[44px] w-full rounded-xl border border-emerald-800/70 bg-[#051A15] px-3.5 py-2 text-sm font-medium text-white placeholder-slate-500 focus:border-emerald-400 focus:outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1.5 block text-xs font-medium text-emerald-100/80">
+                              {t('setup.matchNameLabel')}
+                            </label>
+                            <input
+                              type="text"
+                              value={matchName}
+                              onChange={(e) => setMatchName(e.target.value)}
+                              placeholder={t('setup.matchNamePlaceholder')}
+                              className="min-h-[44px] w-full rounded-xl border border-emerald-800/70 bg-[#051A15] px-3.5 py-2 text-sm font-medium text-white placeholder-slate-500 focus:border-emerald-400 focus:outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1.5 block text-xs font-medium text-emerald-100/80">
+                              {t('setup.courtNameLabel')}
+                            </label>
+                            <input
+                              type="text"
+                              value={courtName}
+                              onChange={(e) => setCourtName(e.target.value)}
+                              placeholder={t('setup.courtNamePlaceholder')}
+                              className="min-h-[44px] w-full rounded-xl border border-emerald-800/70 bg-[#051A15] px-3.5 py-2 text-sm font-medium text-white placeholder-slate-500 focus:border-emerald-400 focus:outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1.5 block text-xs font-medium text-emerald-100/80">
+                              {t('setup.umpireNameLabel')}
+                            </label>
+                            <input
+                              type="text"
+                              value={umpireName}
+                              onChange={(e) => setUmpireName(e.target.value)}
+                              placeholder={t('setup.umpireNamePlaceholder')}
+                              className="min-h-[44px] w-full rounded-xl border border-emerald-800/70 bg-[#051A15] px-3.5 py-2 text-sm font-medium text-white placeholder-slate-500 focus:border-emerald-400 focus:outline-none"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* 5 International Disciplines */}
                 <div>
@@ -745,10 +826,228 @@ export const MatchSetup: React.FC<MatchSetupProps> = ({
                 </div>
               </section>
 
+              {/* Match Rules (collapsed summary + gear edit button, saved across matches) */}
+              <section className="rounded-2xl border border-emerald-900/70 bg-[#0B241E] p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <h2 className="text-base font-bold text-white">
+                      {t('setup.section2Title')}
+                    </h2>
+                    <p className="mt-0.5 text-xs font-medium text-emerald-200/85 tabular-nums">
+                      {t('setup.rulesSummaryLine', {
+                        totalGames: gamesToWin * 2 - 1,
+                        points: pointsPerGame,
+                        cap: maxPoints,
+                        intervals: bwfIntervalsEnabled
+                          ? t('setup.rulesIntervalsOn', {
+                              midSec: midGameIntervalSec,
+                              gameSec: betweenGameIntervalSec,
+                            })
+                          : t('setup.rulesIntervalsOff'),
+                      })}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    aria-expanded={isRulesOpen}
+                    aria-label={t('setup.editRulesAria')}
+                    title={t('setup.editRulesAria')}
+                    onClick={() => setIsRulesOpen((v) => !v)}
+                    className={`flex min-h-[42px] min-w-[42px] shrink-0 items-center justify-center rounded-xl border transition-colors ${
+                      isRulesOpen
+                        ? 'border-emerald-400 bg-emerald-500/20 text-emerald-200'
+                        : 'border-emerald-800/70 bg-[#061814] text-emerald-200 hover:border-emerald-500/60 hover:text-white'
+                    }`}
+                  >
+                    <Settings
+                      className={`h-4 w-4 transition-transform duration-200 ${
+                        isRulesOpen ? 'rotate-45 text-emerald-300' : ''
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {isRulesOpen && (
+                  <div className="mt-4 border-t border-emerald-900/60 pt-4">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <div>
+                        <label className="mb-1.5 block text-xs font-medium text-emerald-100/80">
+                          {t('setup.gamesToWinLabel')}
+                        </label>
+                        <div className="grid grid-cols-3 gap-1.5 rounded-xl bg-[#061814] p-1 border border-emerald-900/70">
+                          {[
+                            { val: 1, label: t('setup.bo1') },
+                            { val: 2, label: t('setup.bo3') },
+                            { val: 3, label: t('setup.bo5') },
+                          ].map((opt) => (
+                            <button
+                              key={opt.val}
+                              type="button"
+                              onClick={() => setGamesToWin(opt.val)}
+                              className={`min-h-[38px] rounded-lg px-2 text-xs font-semibold transition-colors whitespace-nowrap ${
+                                gamesToWin === opt.val
+                                  ? 'bg-emerald-500 text-slate-950'
+                                  : 'text-emerald-100/75 hover:text-white'
+                              }`}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="mb-1.5 block text-xs font-medium text-emerald-100/80">
+                          {t('setup.scoringFormatLabel')}
+                        </label>
+                        <div className="grid grid-cols-3 gap-1.5 rounded-xl bg-[#061814] p-1 border border-emerald-900/70">
+                          {[
+                            { pts: 21, cap: 30, label: '21 / 30' },
+                            { pts: 15, cap: 21, label: '15 / 21' },
+                            { pts: 11, cap: 15, label: '11 / 15' },
+                          ].map((preset) => (
+                            <button
+                              key={preset.pts}
+                              type="button"
+                              onClick={() =>
+                                handlePointsPreset(preset.pts, preset.cap)
+                              }
+                              className={`min-h-[38px] rounded-lg px-2 font-mono text-xs font-semibold tabular-nums transition-colors whitespace-nowrap ${
+                                pointsPerGame === preset.pts &&
+                                maxPoints === preset.cap
+                                  ? 'bg-emerald-500 text-slate-950'
+                                  : 'text-emerald-100/75 hover:text-white'
+                              }`}
+                            >
+                              {preset.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="mb-1 block text-xs text-emerald-100/70">
+                          {t('setup.pointsPerGameLabel')}
+                        </label>
+                        <input
+                          type="number"
+                          min={5}
+                          max={50}
+                          value={pointsPerGame}
+                          onChange={(e) =>
+                            setPointsPerGame(
+                              Math.max(5, Number(e.target.value) || 21)
+                            )
+                          }
+                          className="min-h-[42px] w-full rounded-xl border border-emerald-800/70 bg-[#061814] px-3 py-2 font-mono text-sm tabular-nums text-white focus:border-emerald-400 focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs text-emerald-100/70">
+                          {t('setup.maxPointsLabel')}
+                        </label>
+                        <input
+                          type="number"
+                          min={pointsPerGame}
+                          max={60}
+                          value={maxPoints}
+                          onChange={(e) =>
+                            setMaxPoints(
+                              Math.max(
+                                pointsPerGame,
+                                Number(e.target.value) || 30
+                              )
+                            )
+                          }
+                          className="min-h-[42px] w-full rounded-xl border border-emerald-800/70 bg-[#061814] px-3 py-2 font-mono text-sm tabular-nums text-white focus:border-emerald-400 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    {/* International BWF Intervals & Change of Ends */}
+                    <div className="mt-4 rounded-xl border border-emerald-900/70 bg-[#061814] p-3.5 space-y-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-xs font-bold text-emerald-200">
+                            {t('setup.bwfIntervalsTitle')}
+                          </div>
+                          <p className="mt-0.5 text-[11px] leading-relaxed text-emerald-100/65">
+                            {t('setup.bwfIntervalsSummary', {
+                              midSec: midGameIntervalSec,
+                              points: Math.ceil(pointsPerGame / 2),
+                              gameSec: betweenGameIntervalSec,
+                            })}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={bwfIntervalsEnabled}
+                          onClick={() => setBwfIntervalsEnabled((v) => !v)}
+                          className={`flex min-h-[34px] shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold transition-colors ${
+                            bwfIntervalsEnabled
+                              ? 'border-emerald-400 bg-emerald-500/20 text-emerald-200'
+                              : 'border-emerald-800 bg-[#0B241E] text-emerald-100/60'
+                          }`}
+                        >
+                          {bwfIntervalsEnabled && (
+                            <Check className="h-3.5 w-3.5 text-emerald-400" />
+                          )}
+                          <span>
+                            {bwfIntervalsEnabled ? 'BWF ON' : 'OFF'}
+                          </span>
+                        </button>
+                      </div>
+
+                      {bwfIntervalsEnabled && (
+                        <div className="grid grid-cols-2 gap-3 border-t border-emerald-900/60 pt-2.5">
+                          <div>
+                            <label className="mb-1 block text-[11px] text-emerald-100/70">
+                              {t('setup.midGameIntervalLabel')}
+                            </label>
+                            <input
+                              type="number"
+                              min={15}
+                              max={300}
+                              value={midGameIntervalSec}
+                              onChange={(e) =>
+                                setMidGameIntervalSec(
+                                  Math.max(15, Number(e.target.value) || 60)
+                                )
+                              }
+                              className="min-h-[38px] w-full rounded-lg border border-emerald-800/70 bg-[#0B241E] px-2.5 py-1.5 font-mono text-xs tabular-nums text-white focus:border-emerald-400 focus:outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-[11px] text-emerald-100/70">
+                              {t('setup.betweenGameIntervalLabel')}
+                            </label>
+                            <input
+                              type="number"
+                              min={15}
+                              max={600}
+                              value={betweenGameIntervalSec}
+                              onChange={(e) =>
+                                setBetweenGameIntervalSec(
+                                  Math.max(15, Number(e.target.value) || 120)
+                                )
+                              }
+                              className="min-h-[38px] w-full rounded-lg border border-emerald-800/70 bg-[#0B241E] px-2.5 py-1.5 font-mono text-xs tabular-nums text-white focus:border-emerald-400 focus:outline-none"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </section>
+
               {/* Player Information */}
               <section className="rounded-2xl border border-emerald-900/70 bg-[#0B241E] p-5 space-y-5">
                 <h2 className="text-base font-bold text-white">
-                  {t('setup.section2Title')}
+                  {t('setup.section3Title')}
                 </h2>
 
                 {/* Side A */}
@@ -795,179 +1094,6 @@ export const MatchSetup: React.FC<MatchSetupProps> = ({
                   )}
                   {matchClass === 'doubles' &&
                     renderPlayerFields(t('setup.playerB2'), pB2, setPB2)}
-                </div>
-              </section>
-
-              {/* Match Rules */}
-              <section className="rounded-2xl border border-emerald-900/70 bg-[#0B241E] p-5">
-                <h2 className="text-base font-bold text-white">
-                  {t('setup.section3Title')}
-                </h2>
-                <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-emerald-100/80">
-                      {t('setup.gamesToWinLabel')}
-                    </label>
-                    <div className="grid grid-cols-3 gap-1.5 rounded-xl bg-[#061814] p-1 border border-emerald-900/70">
-                      {[
-                        { val: 1, label: t('setup.bo1') },
-                        { val: 2, label: t('setup.bo3') },
-                        { val: 3, label: t('setup.bo5') },
-                      ].map((opt) => (
-                        <button
-                          key={opt.val}
-                          type="button"
-                          onClick={() => setGamesToWin(opt.val)}
-                          className={`min-h-[38px] rounded-lg px-2 text-xs font-semibold transition-colors whitespace-nowrap ${
-                            gamesToWin === opt.val
-                              ? 'bg-emerald-500 text-slate-950'
-                              : 'text-emerald-100/75 hover:text-white'
-                          }`}
-                        >
-                          {opt.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-emerald-100/80">
-                      {t('setup.scoringFormatLabel')}
-                    </label>
-                    <div className="grid grid-cols-3 gap-1.5 rounded-xl bg-[#061814] p-1 border border-emerald-900/70">
-                      {[
-                        { pts: 21, cap: 30, label: '21 / 30' },
-                        { pts: 15, cap: 21, label: '15 / 21' },
-                        { pts: 11, cap: 15, label: '11 / 15' },
-                      ].map((preset) => (
-                        <button
-                          key={preset.pts}
-                          type="button"
-                          onClick={() =>
-                            handlePointsPreset(preset.pts, preset.cap)
-                          }
-                          className={`min-h-[38px] rounded-lg px-2 font-mono text-xs font-semibold tabular-nums transition-colors whitespace-nowrap ${
-                            pointsPerGame === preset.pts &&
-                            maxPoints === preset.cap
-                              ? 'bg-emerald-500 text-slate-950'
-                              : 'text-emerald-100/75 hover:text-white'
-                          }`}
-                        >
-                          {preset.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-3 grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="mb-1 block text-xs text-emerald-100/70">
-                      {t('setup.pointsPerGameLabel')}
-                    </label>
-                    <input
-                      type="number"
-                      min={5}
-                      max={50}
-                      value={pointsPerGame}
-                      onChange={(e) =>
-                        setPointsPerGame(Math.max(5, Number(e.target.value) || 21))
-                      }
-                      className="min-h-[42px] w-full rounded-xl border border-emerald-800/70 bg-[#061814] px-3 py-2 font-mono text-sm tabular-nums text-white focus:border-emerald-400 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs text-emerald-100/70">
-                      {t('setup.maxPointsLabel')}
-                    </label>
-                    <input
-                      type="number"
-                      min={pointsPerGame}
-                      max={60}
-                      value={maxPoints}
-                      onChange={(e) =>
-                        setMaxPoints(
-                          Math.max(pointsPerGame, Number(e.target.value) || 30)
-                        )
-                      }
-                      className="min-h-[42px] w-full rounded-xl border border-emerald-800/70 bg-[#061814] px-3 py-2 font-mono text-sm tabular-nums text-white focus:border-emerald-400 focus:outline-none"
-                    />
-                  </div>
-                </div>
-
-                {/* International BWF Intervals & Change of Ends */}
-                <div className="mt-4 rounded-xl border border-emerald-900/70 bg-[#061814] p-3.5 space-y-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-xs font-bold text-emerald-200">
-                        {t('setup.bwfIntervalsTitle')}
-                      </div>
-                      <p className="mt-0.5 text-[11px] leading-relaxed text-emerald-100/65">
-                        {t('setup.bwfIntervalsSummary', {
-                          midSec: midGameIntervalSec,
-                          points: Math.ceil(pointsPerGame / 2),
-                          gameSec: betweenGameIntervalSec,
-                        })}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={bwfIntervalsEnabled}
-                      onClick={() => setBwfIntervalsEnabled((v) => !v)}
-                      className={`flex min-h-[34px] shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold transition-colors ${
-                        bwfIntervalsEnabled
-                          ? 'border-emerald-400 bg-emerald-500/20 text-emerald-200'
-                          : 'border-emerald-800 bg-[#0B241E] text-emerald-100/60'
-                      }`}
-                    >
-                      {bwfIntervalsEnabled && (
-                        <Check className="h-3.5 w-3.5 text-emerald-400" />
-                      )}
-                      <span>
-                        {bwfIntervalsEnabled ? 'BWF ON' : 'OFF'}
-                      </span>
-                    </button>
-                  </div>
-
-                  {bwfIntervalsEnabled && (
-                    <div className="grid grid-cols-2 gap-3 border-t border-emerald-900/60 pt-2.5">
-                      <div>
-                        <label className="mb-1 block text-[11px] text-emerald-100/70">
-                          {t('setup.midGameIntervalLabel')}
-                        </label>
-                        <input
-                          type="number"
-                          min={15}
-                          max={300}
-                          value={midGameIntervalSec}
-                          onChange={(e) =>
-                            setMidGameIntervalSec(
-                              Math.max(15, Number(e.target.value) || 60)
-                            )
-                          }
-                          className="min-h-[38px] w-full rounded-lg border border-emerald-800/70 bg-[#0B241E] px-2.5 py-1.5 font-mono text-xs tabular-nums text-white focus:border-emerald-400 focus:outline-none"
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-[11px] text-emerald-100/70">
-                          {t('setup.betweenGameIntervalLabel')}
-                        </label>
-                        <input
-                          type="number"
-                          min={15}
-                          max={600}
-                          value={betweenGameIntervalSec}
-                          onChange={(e) =>
-                            setBetweenGameIntervalSec(
-                              Math.max(15, Number(e.target.value) || 120)
-                            )
-                          }
-                          className="min-h-[38px] w-full rounded-lg border border-emerald-800/70 bg-[#0B241E] px-2.5 py-1.5 font-mono text-xs tabular-nums text-white focus:border-emerald-400 focus:outline-none"
-                        />
-                      </div>
-                    </div>
-                  )}
                 </div>
               </section>
             </div>

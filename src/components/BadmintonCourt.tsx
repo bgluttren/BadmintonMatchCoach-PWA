@@ -45,10 +45,16 @@ interface BadmintonCourtProps {
 
 interface ActiveGesture {
   pointerId: number;
+  pointerType: string;
+  downAt: number;
   startClientX: number;
   startClientY: number;
+  lastClientX: number;
+  lastClientY: number;
   startCourtX: number;
   startCourtY: number;
+  lastCourtX: number;
+  lastCourtY: number;
   mode: 'pending' | 'dragging_end';
   timerId: number | null;
 }
@@ -191,25 +197,31 @@ export const BadmintonCourt: React.FC<BadmintonCourtProps> = ({
     t,
   ]);
 
-  useEffect(() => {
-    const cancelAllGestures = () => {
-      let wasDragging = false;
-      gesturesRef.current.forEach((g) => {
-        if (g.timerId !== null) {
-          window.clearTimeout(g.timerId);
-          g.timerId = null;
-        }
-        if (g.mode === 'dragging_end') {
-          wasDragging = true;
-        }
-      });
-      gesturesRef.current.clear();
-      if (wasDragging) {
-        setIsDraggingEnd(false);
-        setDragCoords(null);
+  const cancelAllGestures = useCallback(() => {
+    let wasDragging = false;
+    gesturesRef.current.forEach((g) => {
+      if (g.timerId !== null) {
+        window.clearTimeout(g.timerId);
+        g.timerId = null;
       }
-    };
+      if (g.mode === 'dragging_end') {
+        wasDragging = true;
+      }
+    });
+    gesturesRef.current.clear();
+    if (wasDragging) {
+      setIsDraggingEnd(false);
+      setDragCoords(null);
+    }
+  }, []);
 
+  useEffect(() => {
+    if (isModalOpen) {
+      cancelAllGestures();
+    }
+  }, [isModalOpen, cancelAllGestures]);
+
+  useEffect(() => {
     const handleVisibility = () => {
       if (document.visibilityState === 'hidden') {
         cancelAllGestures();
@@ -234,7 +246,7 @@ export const BadmintonCourt: React.FC<BadmintonCourtProps> = ({
       });
       gesturesRef.current.clear();
     };
-  }, []);
+  }, [cancelAllGestures]);
 
   const clientToCourt = useCallback(
     (clientX: number, clientY: number): { x: number; y: number } => {
@@ -243,15 +255,27 @@ export const BadmintonCourt: React.FC<BadmintonCourtProps> = ({
       let svgY = CENTER_Y;
 
       if (svg) {
-        const ctm = svg.getScreenCTM();
-        if (ctm) {
-          const pt = svg.createSVGPoint();
-          pt.x = clientX;
-          pt.y = clientY;
-          const transformed = pt.matrixTransform(ctm.inverse());
-          svgX = transformed.x;
-          svgY = transformed.y;
-        } else {
+        let usedCtm = false;
+        try {
+          const ctm = svg.getScreenCTM();
+          if (ctm) {
+            const pt = svg.createSVGPoint();
+            pt.x = clientX;
+            pt.y = clientY;
+            const transformed = pt.matrixTransform(ctm.inverse());
+            if (
+              Number.isFinite(transformed.x) &&
+              Number.isFinite(transformed.y)
+            ) {
+              svgX = transformed.x;
+              svgY = transformed.y;
+              usedCtm = true;
+            }
+          }
+        } catch {
+          usedCtm = false;
+        }
+        if (!usedCtm) {
           const rect = svg.getBoundingClientRect();
           svgX = vbX + ((clientX - rect.left) / Math.max(1, rect.width)) * vbW;
           svgY = vbY + ((clientY - rect.top) / Math.max(1, rect.height)) * vbH;
@@ -270,6 +294,147 @@ export const BadmintonCourt: React.FC<BadmintonCourtProps> = ({
     [isPortrait, vbX, vbY, vbW, vbH]
   );
 
+  const lastDragCoordsRef = useRef<{ x: number; y: number } | null>(null);
+
+  const applyDragPosition = useCallback(
+    (clientX: number, clientY: number) => {
+      const pos = clientToCourt(clientX, clientY);
+      const rx = Math.round(pos.x);
+      const ry = Math.round(pos.y);
+      if (!Number.isFinite(rx) || !Number.isFinite(ry)) return;
+      const prev = lastDragCoordsRef.current;
+      if (prev && prev.x === rx && prev.y === ry) return;
+      lastDragCoordsRef.current = { x: rx, y: ry };
+      setDragCoords({ x: rx, y: ry });
+      onUpdateLastShotPosition(rx, ry);
+    },
+    [clientToCourt, onUpdateLastShotPosition]
+  );
+
+  const finishGesture = useCallback(
+    (
+      pointerId: number,
+      eventType: string,
+      clientX: number,
+      clientY: number
+    ) => {
+      const active = gesturesRef.current.get(pointerId);
+      if (!active) return;
+
+      if (active.timerId !== null) {
+        window.clearTimeout(active.timerId);
+        active.timerId = null;
+      }
+      gesturesRef.current.delete(pointerId);
+
+      const container = containerRef.current;
+      if (container) {
+        try {
+          if (container.hasPointerCapture(pointerId)) {
+            container.releasePointerCapture(pointerId);
+          }
+        } catch {
+          // Ignore
+        }
+      }
+
+      if (active.mode === 'dragging_end') {
+        lastDragCoordsRef.current = null;
+        setIsDraggingEnd(false);
+        setDragCoords(null);
+        if (eventType !== 'pointercancel') {
+          onOpenResultMenu();
+        }
+        return;
+      }
+
+      if (eventType === 'pointercancel') return;
+
+      const dx = clientX - active.startClientX;
+      const dy = clientY - active.startClientY;
+      const dist = Math.hypot(dx, dy);
+
+      // Swipe Left / Right Detection
+      if (Math.abs(dx) >= 50 && Math.abs(dx) > Math.abs(dy) * 1.25) {
+        if (dx < 0) {
+          if (shotsCountRef.current > 0) {
+            onUndoShot();
+            if (navigator.vibrate) navigator.vibrate(12);
+            showFeedback(t('court.undoShot'));
+          } else if (matchState.rallies.length > 0) {
+            onUndoShot();
+            if (navigator.vibrate) navigator.vibrate(16);
+          }
+        } else {
+          if (redoStack.length > 0) {
+            onRedoShot();
+            if (navigator.vibrate) navigator.vibrate(12);
+            showFeedback(t('court.redoShot'));
+          }
+        }
+        return;
+      }
+
+      // Standard Quick Tap -> Register Shot
+      if (dist < 30) {
+        const courtPos = clientToCourt(clientX, clientY);
+        const result = onRegisterTap(courtPos.x, courtPos.y, Date.now());
+        shotsCountRef.current += 1;
+        if (navigator.vibrate) navigator.vibrate(10);
+        if (result.ghostCount > 0) {
+          showFeedback(
+            t(
+              result.ghostCount > 1
+                ? 'court.ghostShotsAdded'
+                : 'court.ghostShotAdded',
+              { count: result.ghostCount }
+            )
+          );
+        }
+      }
+    },
+    [
+      clientToCourt,
+      matchState.rallies.length,
+      onOpenResultMenu,
+      onRedoShot,
+      onRegisterTap,
+      onUndoShot,
+      redoStack.length,
+      showFeedback,
+      t,
+    ]
+  );
+
+  // Window fallback listeners while dragging landing position so drag never drops if capture is lost
+  useEffect(() => {
+    if (!isDraggingEnd) return;
+
+    const onWindowPointerMove = (e: PointerEvent) => {
+      const active = gesturesRef.current.get(e.pointerId);
+      if (!active || active.mode !== 'dragging_end') return;
+      active.lastClientX = e.clientX;
+      active.lastClientY = e.clientY;
+      applyDragPosition(e.clientX, e.clientY);
+    };
+
+    const onWindowPointerEnd = (e: PointerEvent) => {
+      const active = gesturesRef.current.get(e.pointerId);
+      if (!active || active.mode !== 'dragging_end') return;
+      finishGesture(e.pointerId, e.type, e.clientX, e.clientY);
+    };
+
+    window.addEventListener('pointermove', onWindowPointerMove);
+    window.addEventListener('pointerup', onWindowPointerEnd);
+    window.addEventListener('pointercancel', onWindowPointerEnd);
+
+    return () => {
+      window.removeEventListener('pointermove', onWindowPointerMove);
+      window.removeEventListener('pointerup', onWindowPointerEnd);
+      window.removeEventListener('pointercancel', onWindowPointerEnd);
+    };
+  }, [isDraggingEnd, applyDragPosition, finishGesture]);
+
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (isModalOpen) return;
     if (e.button !== 0 && e.pointerType === 'mouse') return;
@@ -280,6 +445,21 @@ export const BadmintonCourt: React.FC<BadmintonCourtProps> = ({
     } catch {
       // Ignore capture errors on synthetic events
     }
+
+    const now = Date.now();
+    // Prune stale zombie pointers (e.g. mouse or missed pointerup) so long-press is never permanently blocked
+    gesturesRef.current.forEach((g, id) => {
+      if (
+        (e.pointerType === 'mouse' && g.pointerType === 'mouse') ||
+        (g.mode === 'pending' && now - g.downAt > 10000)
+      ) {
+        if (g.timerId !== null) {
+          window.clearTimeout(g.timerId);
+          g.timerId = null;
+        }
+        gesturesRef.current.delete(id);
+      }
+    });
 
     const courtPos = clientToCourt(e.clientX, e.clientY);
 
@@ -312,25 +492,28 @@ export const BadmintonCourt: React.FC<BadmintonCourtProps> = ({
             // Long-press during/end of rally enters Free Landing Position Drag
             active.mode = 'dragging_end';
             active.timerId = null;
+            const rx = Math.round(active.lastCourtX);
+            const ry = Math.round(active.lastCourtY);
+            lastDragCoordsRef.current = { x: rx, y: ry };
             setIsDraggingEnd(true);
-            setDragCoords({
-              x: Math.round(active.startCourtX),
-              y: Math.round(active.startCourtY),
-            });
-            onUpdateLastShotPosition(
-              Math.round(active.startCourtX),
-              Math.round(active.startCourtY)
-            );
+            setDragCoords({ x: rx, y: ry });
+            onUpdateLastShotPosition(rx, ry);
           }
-        }, 450)
+        }, 380)
       : null;
 
     gesturesRef.current.set(e.pointerId, {
       pointerId: e.pointerId,
+      pointerType: e.pointerType,
+      downAt: now,
       startClientX: e.clientX,
       startClientY: e.clientY,
+      lastClientX: e.clientX,
+      lastClientY: e.clientY,
       startCourtX: courtPos.x,
       startCourtY: courtPos.y,
+      lastCourtX: courtPos.x,
+      lastCourtY: courtPos.y,
       mode: 'pending',
       timerId,
     });
@@ -340,97 +523,41 @@ export const BadmintonCourt: React.FC<BadmintonCourtProps> = ({
     const active = gesturesRef.current.get(e.pointerId);
     if (!active) return;
 
+    active.lastClientX = e.clientX;
+    active.lastClientY = e.clientY;
+
     if (active.mode === 'dragging_end') {
       e.preventDefault();
-      const pos = clientToCourt(e.clientX, e.clientY);
-      const rx = Math.round(pos.x);
-      const ry = Math.round(pos.y);
-      setDragCoords({ x: rx, y: ry });
-      onUpdateLastShotPosition(rx, ry);
+      applyDragPosition(e.clientX, e.clientY);
       return;
     }
+
+    const courtPos = clientToCourt(e.clientX, e.clientY);
+    active.lastCourtX = courtPos.x;
+    active.lastCourtY = courtPos.y;
 
     const dist = Math.hypot(
       e.clientX - active.startClientX,
       e.clientY - active.startClientY
     );
-    if (dist > 24 && active.timerId !== null) {
+    if (dist > 44 && active.timerId !== null) {
       window.clearTimeout(active.timerId);
       active.timerId = null;
     }
   };
 
   const handlePointerUpOrCancel = (e: React.PointerEvent<HTMLDivElement>) => {
-    const active = gesturesRef.current.get(e.pointerId);
-    if (!active) return;
+    finishGesture(e.pointerId, e.type, e.clientX, e.clientY);
+  };
 
+  const handleLostPointerCapture = (e: React.PointerEvent<HTMLDivElement>) => {
+    const active = gesturesRef.current.get(e.pointerId);
+    if (!active || active.mode !== 'pending') return;
     if (active.timerId !== null) {
       window.clearTimeout(active.timerId);
       active.timerId = null;
     }
     gesturesRef.current.delete(e.pointerId);
-
-    try {
-      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-        e.currentTarget.releasePointerCapture(e.pointerId);
-      }
-    } catch {
-      // Ignore
-    }
-
-    if (active.mode === 'dragging_end') {
-      setIsDraggingEnd(false);
-      setDragCoords(null);
-      if (e.type !== 'pointercancel') {
-        onOpenResultMenu();
-      }
-      return;
-    }
-
-    if (e.type === 'pointercancel') return;
-
-    const dx = e.clientX - active.startClientX;
-    const dy = e.clientY - active.startClientY;
-    const dist = Math.hypot(dx, dy);
-
-    // Swipe Left / Right Detection
-    if (Math.abs(dx) >= 50 && Math.abs(dx) > Math.abs(dy) * 1.25) {
-      if (dx < 0) {
-        if (shotsCountRef.current > 0) {
-          onUndoShot();
-          if (navigator.vibrate) navigator.vibrate(12);
-          showFeedback(t('court.undoShot'));
-        } else if (matchState.rallies.length > 0) {
-          onUndoShot();
-          if (navigator.vibrate) navigator.vibrate(16);
-        }
-      } else {
-        if (redoStack.length > 0) {
-          onRedoShot();
-          if (navigator.vibrate) navigator.vibrate(12);
-          showFeedback(t('court.redoShot'));
-        }
-      }
-      return;
-    }
-
-    // Standard Quick Tap -> Register Shot
-    if (dist < 30) {
-      const courtPos = clientToCourt(e.clientX, e.clientY);
-      const result = onRegisterTap(courtPos.x, courtPos.y, Date.now());
-      shotsCountRef.current += 1;
-      if (navigator.vibrate) navigator.vibrate(10);
-      if (result.ghostCount > 0) {
-        showFeedback(
-          t(
-            result.ghostCount > 1
-              ? 'court.ghostShotsAdded'
-              : 'court.ghostShotAdded',
-            { count: result.ghostCount }
-          )
-        );
-      }
-    }
   };
 
   const serviceInfo = useMemo(
@@ -454,11 +581,18 @@ export const BadmintonCourt: React.FC<BadmintonCourtProps> = ({
   const isSingles = matchState.config.matchClass === 'singles';
   const isIdle = currentShots.length === 0;
 
+  const previousRally = useMemo(() => {
+    if (!isIdle || matchState.rallies.length === 0) return null;
+    const last = matchState.rallies[matchState.rallies.length - 1];
+    return last && last.shots.length > 0 ? last : null;
+  }, [isIdle, matchState.rallies]);
+
   // Screen positions for upright text & icons
   const half1ScorePos = toScreen(335, CENTER_Y);
   const half2ScorePos = toScreen(1005, CENTER_Y);
-  const half1MetaPos = toScreen(38, CENTER_Y);
-  const half2MetaPos = toScreen(1302, CENTER_Y);
+  const metaCourtY = isPortrait ? CENTER_Y : CENTER_Y - 50;
+  const half1MetaPos = toScreen(38, metaCourtY);
+  const half2MetaPos = toScreen(1302, metaCourtY);
   const serveIconPos = toScreen(
     serviceInfo.serverRect.x + serviceInfo.serverRect.width / 2,
     serviceInfo.serverRect.y + serviceInfo.serverRect.height / 2
@@ -478,6 +612,7 @@ export const BadmintonCourt: React.FC<BadmintonCourtProps> = ({
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUpOrCancel}
       onPointerCancel={handlePointerUpOrCancel}
+      onLostPointerCapture={handleLostPointerCapture}
       onContextMenu={(e) => e.preventDefault()}
     >
       {/* Full-Screen Court SVG: Always fills 100% of screen and matches device orientation */}
@@ -658,6 +793,43 @@ export const BadmintonCourt: React.FC<BadmintonCourtProps> = ({
             />
           </g>
 
+          {/* Previous Rally Trajectory Lines (remain visible after outcome until next serve is tapped) */}
+          {previousRally && previousRally.shots.length > 1 && (
+            <g>
+              {previousRally.shots.map((shot, idx) => {
+                if (idx === 0) return null;
+                const prev = previousRally.shots[idx - 1];
+                const isDashed = shot.isGhost || prev.isGhost;
+                return (
+                  <g key={`prev_line_${shot.id}`}>
+                    <line
+                      x1={prev.x}
+                      y1={prev.y}
+                      x2={shot.x}
+                      y2={shot.y}
+                      stroke="#051A15"
+                      strokeWidth={isDashed ? 5.5 : 6.5}
+                      strokeOpacity={0.36}
+                      strokeLinecap="round"
+                      strokeDasharray={isDashed ? '11 9' : undefined}
+                    />
+                    <line
+                      x1={prev.x}
+                      y1={prev.y}
+                      x2={shot.x}
+                      y2={shot.y}
+                      stroke={isDashed ? '#94A3B8' : '#7DD3FC'}
+                      strokeWidth={isDashed ? 3.5 : 4.2}
+                      strokeOpacity={isDashed ? 0.52 : 0.72}
+                      strokeLinecap="round"
+                      strokeDasharray={isDashed ? '11 9' : undefined}
+                    />
+                  </g>
+                );
+              })}
+            </g>
+          )}
+
           {/* Connecting Trajectory Lines (transformed seamlessly with the court) */}
           {currentShots.map((shot, idx) => {
             if (idx === 0) return null;
@@ -768,7 +940,7 @@ export const BadmintonCourt: React.FC<BadmintonCourtProps> = ({
             </text>
           </g>
 
-          {/* Set & Score Metadata Anchored Near Each Baseline */}
+          {/* Set & Score Metadata Anchored Near Each Baseline (0.5m above center line in landscape) */}
           <g
             transform={`translate(${half1MetaPos.x}, ${half1MetaPos.y}) scale(${compX}, ${compY})`}
           >
@@ -778,11 +950,17 @@ export const BadmintonCourt: React.FC<BadmintonCourtProps> = ({
               textAnchor={isPortrait ? 'middle' : 'start'}
               dominantBaseline="central"
               fill={leftSide === serviceInfo.servingSide ? '#FBBF24' : '#E2E8F0'}
-              fillOpacity={0.9}
+              fillOpacity={0.94}
               fontSize={isPortrait ? 19 : 21}
               fontWeight={700}
               fontFamily="JetBrains Mono, monospace"
-              style={{ fontVariantNumeric: 'tabular-nums' }}
+              style={{
+                fontVariantNumeric: 'tabular-nums',
+                paintOrder: 'stroke',
+                stroke: '#051A15',
+                strokeWidth: 4,
+                strokeLinejoin: 'round',
+              }}
             >
               {t('court.sideUpper')} {leftSide} · {t('court.gamesUpper')}{' '}
               {leftGames} · {t('court.ptsUpper')} {leftScore}
@@ -798,17 +976,107 @@ export const BadmintonCourt: React.FC<BadmintonCourtProps> = ({
               textAnchor={isPortrait ? 'middle' : 'end'}
               dominantBaseline="central"
               fill={rightSide === serviceInfo.servingSide ? '#FBBF24' : '#E2E8F0'}
-              fillOpacity={0.9}
+              fillOpacity={0.94}
               fontSize={isPortrait ? 19 : 21}
               fontWeight={700}
               fontFamily="JetBrains Mono, monospace"
-              style={{ fontVariantNumeric: 'tabular-nums' }}
+              style={{
+                fontVariantNumeric: 'tabular-nums',
+                paintOrder: 'stroke',
+                stroke: '#051A15',
+                strokeWidth: 4,
+                strokeLinejoin: 'round',
+              }}
             >
               {t('court.sideUpper')} {rightSide} · {t('court.gamesUpper')}{' '}
               {rightGames} · {t('court.ptsUpper')} {rightScore}
             </text>
           </g>
         </g>
+
+        {/* Previous Rally Shot Nodes (subtle upright trail underneath active serve & player labels) */}
+        {previousRally && (
+          <g pointerEvents="none" opacity={0.82}>
+            {previousRally.shots.map((shot, idx) => {
+              const screenPos = toScreen(shot.x, shot.y);
+              const isServe = idx === 0;
+              const isLast = idx === previousRally.shots.length - 1;
+              const radius = isServe || isLast ? 15 : 13;
+
+              let fill = '#0F172A';
+              let stroke = '#7DD3FC';
+              let textFill = '#E0F2FE';
+
+              if (isLast) {
+                if (previousRally.outcome === 'IN') {
+                  fill = '#059669';
+                  stroke = '#6EE7B7';
+                  textFill = '#ECFDF5';
+                } else if (
+                  previousRally.outcome === 'OUT' ||
+                  previousRally.outcome === 'FAULT'
+                ) {
+                  fill = '#E11D48';
+                  stroke = '#FDA4AF';
+                  textFill = '#FFF1F2';
+                } else {
+                  fill = '#D97706';
+                  stroke = '#FDE68A';
+                  textFill = '#FFFBEB';
+                }
+              } else if (shot.isGhost) {
+                fill = 'rgba(15, 23, 42, 0.55)';
+                stroke = '#94A3B8';
+                textFill = '#CBD5E1';
+              } else if (isServe) {
+                fill = '#0369A1';
+                stroke = '#BAE6FD';
+                textFill = '#F0F9FF';
+              }
+
+              return (
+                <g
+                  key={`prev_node_${shot.id}`}
+                  transform={`translate(${screenPos.x}, ${screenPos.y}) scale(${compX}, ${compY})`}
+                >
+                  {isLast && (
+                    <circle
+                      cx={0}
+                      cy={0}
+                      r={22}
+                      fill="none"
+                      stroke={stroke}
+                      strokeWidth={2.5}
+                      strokeOpacity={0.65}
+                      strokeDasharray="6 4"
+                    />
+                  )}
+                  <circle
+                    cx={0}
+                    cy={0}
+                    r={radius}
+                    fill={fill}
+                    stroke={stroke}
+                    strokeWidth={shot.isGhost ? 2.2 : 2.6}
+                    strokeDasharray={shot.isGhost ? '5 4' : undefined}
+                  />
+                  <text
+                    x={0}
+                    y={0}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    fill={textFill}
+                    fontSize={14}
+                    fontWeight={700}
+                    fontFamily="JetBrains Mono, monospace"
+                  >
+                    {shot.shotNumber}
+                  </text>
+                </g>
+              );
+            })}
+          </g>
+        )}
 
         {/* Upright Serve Shuttlecock Icon inside Server's Highlighted Box */}
         {isIdle && (

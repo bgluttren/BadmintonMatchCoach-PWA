@@ -4,6 +4,7 @@ import {
   IntervalKind,
   MatchClass,
   MatchDiscipline,
+  MatchRules,
   MatchState,
   RallyOutcome,
   ShotRecord,
@@ -15,6 +16,7 @@ const ACTIVE_MATCH_KEY = 'badminton_match_coach_active_v1';
 const ACTIVE_SESSION_KEY = 'badminton_match_coach_session_v1';
 const RALLY_DRAFT_KEY = 'badminton_match_coach_rally_draft_v1';
 const SETUP_DRAFT_KEY = 'badminton_match_coach_setup_draft_v1';
+const LAST_MATCH_RULES_KEY = 'badminton_match_coach_last_rules_v1';
 const SAVED_MATCHES_KEY = 'badminton_match_coach_archive_v1';
 
 const IDB_NAME = 'BadmintonMatchCoachDB';
@@ -164,11 +166,17 @@ export interface PauseDraftState {
   intervalChangeOfEnds?: boolean;
 }
 
+export interface CorrectionTimingState {
+  remainingTimestamps: number[];
+  lastRealTapAt: number | null;
+}
+
 export interface ActiveSessionState {
   viewMode: 'setup' | 'court';
   matchState: MatchState | null;
   currentShots: ShotRecord[];
   redoStack: ShotRecord[][];
+  correctionTiming?: CorrectionTimingState | null;
   activeModal: ActiveModalType;
   resultDraft: ResultDraftState | null;
   pauseDraft: PauseDraftState | null;
@@ -179,6 +187,7 @@ export interface RallyDraftPayload {
   matchId: string;
   currentShots: ShotRecord[];
   redoStack: ShotRecord[][];
+  correctionTiming?: CorrectionTimingState | null;
   updatedAt: number;
 }
 
@@ -216,12 +225,14 @@ export function saveRallyDraft(
   matchId: string,
   currentShots: ShotRecord[],
   redoStack: ShotRecord[][],
-  updatedAt: number = Date.now()
+  updatedAt: number = Date.now(),
+  correctionTiming: CorrectionTimingState | null = null
 ): void {
   const payload: RallyDraftPayload = {
     matchId,
     currentShots,
     redoStack,
+    correctionTiming,
     updatedAt,
   };
   try {
@@ -251,6 +262,7 @@ function loadRallyDraft(): RallyDraftPayload | null {
       matchId: parsed.matchId,
       currentShots: Array.isArray(parsed.currentShots) ? parsed.currentShots : [],
       redoStack: Array.isArray(parsed.redoStack) ? parsed.redoStack : [],
+      correctionTiming: parsed.correctionTiming ?? null,
       updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : 0,
     };
   } catch {
@@ -270,7 +282,8 @@ export function saveActiveSession(session: ActiveSessionState): void {
         session.matchState.config.id,
         session.currentShots,
         session.redoStack,
-        session.updatedAt
+        session.updatedAt,
+        session.correctionTiming ?? null
       );
     } else {
       localStorage.removeItem(ACTIVE_MATCH_KEY);
@@ -312,6 +325,9 @@ export function loadActiveSession(): ActiveSessionState | null {
             : Array.isArray(parsed.redoStack)
               ? parsed.redoStack
               : [],
+          correctionTiming: useRallyDraft
+            ? (rallyDraft.correctionTiming ?? null)
+            : (parsed.correctionTiming ?? null),
           activeModal: parsed.activeModal ?? 'none',
           resultDraft: parsed.resultDraft ?? null,
           pauseDraft: parsed.pauseDraft ?? null,
@@ -330,6 +346,9 @@ export function loadActiveSession(): ActiveSessionState | null {
         matchState: legacyMatch,
         currentShots: useRallyDraft ? rallyDraft.currentShots : [],
         redoStack: useRallyDraft ? rallyDraft.redoStack : [],
+        correctionTiming: useRallyDraft
+          ? (rallyDraft.correctionTiming ?? null)
+          : null,
         activeModal: 'none',
         resultDraft: null,
         pauseDraft: null,
@@ -366,6 +385,40 @@ export function clearSetupDraft(): void {
     localStorage.removeItem(SETUP_DRAFT_KEY);
   } catch {
     // Ignore
+  }
+}
+
+export function saveLastMatchRules(rules: MatchRules): void {
+  try {
+    localStorage.setItem(LAST_MATCH_RULES_KEY, JSON.stringify(rules));
+  } catch {
+    // Ignore
+  }
+}
+
+export function loadLastMatchRules(): MatchRules | null {
+  try {
+    const raw = localStorage.getItem(LAST_MATCH_RULES_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<MatchRules>;
+    if (
+      !parsed ||
+      typeof parsed.gamesToWin !== 'number' ||
+      typeof parsed.pointsPerGame !== 'number' ||
+      typeof parsed.maxPoints !== 'number'
+    ) {
+      return null;
+    }
+    return {
+      gamesToWin: parsed.gamesToWin,
+      pointsPerGame: parsed.pointsPerGame,
+      maxPoints: parsed.maxPoints,
+      bwfIntervalsEnabled: parsed.bwfIntervalsEnabled ?? true,
+      midGameIntervalSec: parsed.midGameIntervalSec ?? 60,
+      betweenGameIntervalSec: parsed.betweenGameIntervalSec ?? 120,
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -437,6 +490,9 @@ export async function hydrateFromIndexedDB(): Promise<{
       ...idbSession,
       currentShots: useRally ? idbRally.currentShots : idbSession.currentShots,
       redoStack: useRally ? idbRally.redoStack : idbSession.redoStack,
+      correctionTiming: useRally
+        ? (idbRally.correctionTiming ?? null)
+        : (idbSession.correctionTiming ?? null),
       updatedAt: useRally ? idbRally.updatedAt : idbSession.updatedAt,
     };
   }

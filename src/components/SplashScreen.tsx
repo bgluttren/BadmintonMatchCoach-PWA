@@ -1,46 +1,82 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useI18n } from '../i18n';
 
 interface SplashScreenProps {
   onComplete: () => void;
 }
 
+const MIN_VISIBLE_MS = 1150;
+const FADE_DURATION_MS = 300;
+const IMAGE_WAIT_FALLBACK_MS = 700;
+
 export const SplashScreen: React.FC<SplashScreenProps> = ({ onComplete }) => {
   const { t } = useI18n();
   const [isFadingOut, setIsFadingOut] = useState(false);
+  const [imageReady, setImageReady] = useState(false);
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  const dismissedRef = useRef(false);
+  const dismissTimerRef = useRef<number | null>(null);
+
+  const triggerDismiss = useCallback(() => {
+    if (dismissedRef.current) return;
+    dismissedRef.current = true;
+    setIsFadingOut(true);
+    dismissTimerRef.current = window.setTimeout(() => {
+      onComplete();
+    }, FADE_DURATION_MS);
+  }, [onComplete]);
 
   useEffect(() => {
+    if (imgRef.current?.complete) {
+      setImageReady(true);
+    }
+    const fallbackTimer = window.setTimeout(() => {
+      setImageReady(true);
+    }, IMAGE_WAIT_FALLBACK_MS);
+
+    return () => {
+      window.clearTimeout(fallbackTimer);
+      if (dismissTimerRef.current !== null) {
+        window.clearTimeout(dismissTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!imageReady) return;
+
     const fadeTimer = window.setTimeout(() => {
-      setIsFadingOut(true);
-    }, 600);
+      if (!dismissedRef.current) {
+        dismissedRef.current = true;
+        setIsFadingOut(true);
+      }
+    }, MIN_VISIBLE_MS);
 
     const doneTimer = window.setTimeout(() => {
       onComplete();
-    }, 800);
+    }, MIN_VISIBLE_MS + FADE_DURATION_MS);
 
     return () => {
       window.clearTimeout(fadeTimer);
       window.clearTimeout(doneTimer);
     };
-  }, [onComplete]);
+  }, [imageReady, onComplete]);
 
   const handleDismiss = (e: React.SyntheticEvent) => {
     e.stopPropagation();
-    setIsFadingOut(true);
-    window.setTimeout(onComplete, 200);
+    triggerDismiss();
   };
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
-        setIsFadingOut(true);
-        window.setTimeout(onComplete, 200);
+        triggerDismiss();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onComplete]);
+  }, [triggerDismiss]);
 
   return (
     <div
@@ -63,10 +99,13 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onComplete }) => {
         <div className="relative flex w-full max-w-md flex-1 items-center justify-center sm:flex-initial">
           <div className="relative aspect-[900/1104] max-h-[68dvh] w-full overflow-hidden rounded-3xl border border-emerald-500/35 bg-[#072D24] shadow-[0_24px_64px_rgba(0,0,0,0.65)]">
             <img
+              ref={imgRef}
               src="./splash-portrait.png"
               alt={t('common.appName')}
               className="h-full w-full object-cover object-center"
               fetchPriority="high"
+              onLoad={() => setImageReady(true)}
+              onError={() => setImageReady(true)}
             />
             <div
               aria-hidden="true"
